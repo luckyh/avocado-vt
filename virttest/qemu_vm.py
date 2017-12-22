@@ -1659,6 +1659,27 @@ class VM(virt_vm.BaseVM):
             parent_bus = _get_pci_bus(devices, params, None, True)
             add_log_anaconda(devices, parent_bus)
 
+        # Add iSCSI session parameters
+        if params.get("storage_type") == "iscsi_builtin":
+            if not devices.has_option("iscsi"):
+                msg = ("Using storage type '%s' requires qemu with support "
+                       "of option '-iscsi'") % params["storage_type"]
+                raise exceptions.TestSkipError(msg)
+            dev = qdevices.QCustomDevice("iscsi")
+            if params.get("iscsi_builtin_global_auth") == "yes":
+                if params.get("iscsi_user"):
+                    dev.set_param("user", params["iscsi_user"])
+                if params.get("iscsi_password"):
+                    dev.set_param("password", params["iscsi_password"])
+            keymaps = [("initiator", "initiator-name"),
+                       ("iscsi_header_digest", "header-digest"),
+                       ("iscsi_timeout", "timeout")]
+            for kmap in keymaps:
+                if params.get(kmap[0]):
+                    dev.set_param(kmap[1], params[kmap[0]])
+            if len(dev):
+                devices.insert(dev)
+
         # Add USB controllers
         usbs = params.objects("usbs")
         if not devices.has_option("device"):
