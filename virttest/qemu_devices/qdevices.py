@@ -35,23 +35,6 @@ def _convert_args(arg_dict):
     return ",".join("%s=%s" % (key, val) for key, val in arg_dict.iteritems())
 
 
-def _build_cmd(cmd, args=None, q_id=None):
-    """
-    Format QMP command from cmd and args
-
-    :param cmd: Command ('device_add', ...)
-    :param q_id: queue id; True = generate random, None = None, str = use str
-    """
-    obj = {"execute": cmd}
-    if args is not None:
-        obj["arguments"] = args
-    if q_id is True:
-        obj["id"] = utils_misc.generate_random_string(8)
-    elif q_id is not None:
-        obj["id"] = q_id
-    return obj
-
-
 #
 # Device objects
 #
