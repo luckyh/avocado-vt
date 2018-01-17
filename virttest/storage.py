@@ -104,12 +104,10 @@ def get_image_blkdebug_filename(params, root_dir):
     :note: params should contain:
            blkdebug -- the name of the debug file.
     """
-    blkdebug_name = params.get("drive_blkdebug", None)
+    blkdebug_name = params.get("drive_blkdebug")
     if blkdebug_name is not None:
-        blkdebug_filename = utils_misc.get_path(root_dir, blkdebug_name)
-    else:
-        blkdebug_filename = None
-    return blkdebug_filename
+        blkdebug_name = utils_misc.get_path(root_dir, blkdebug_name)
+    return blkdebug_name
 
 
 def get_image_filename(params, root_dir):
@@ -118,33 +116,31 @@ def get_image_filename(params, root_dir):
 
     :param params: Dictionary containing the test parameters.
     :param root_dir: Base directory for relative filenames.
-    :param image_name: Force name of image.
-    :param image_format: Format for image.
 
     :note: params should contain:
            image_name -- the name of the image file, without extension
            image_format -- the format of the image (qcow2, raw etc)
     :raise VMDeviceError: When no matching disk found (in indirect method).
     """
-    enable_gluster = params.get("enable_gluster", "no") == "yes"
-    enable_ceph = params.get("enable_ceph", "no") == "yes"
     image_name = params.get("image_name")
-    if image_name:
-        if enable_gluster:
-            image_name = params.get("image_name", "image")
-            image_format = params.get("image_format", "qcow2")
-            return gluster.get_image_filename(params, image_name, image_format)
-        if enable_ceph:
-            image_format = params.get("image_format", "qcow2")
-            ceph_monitor = params["ceph_monitor"]
-            rbd_pool_name = params["rbd_pool_name"]
-            rbd_image_name = "%s.%s" % (image_name.split("/")[-1],
-                                        image_format)
-            return ceph.get_image_filename(ceph_monitor, rbd_pool_name,
-                                           rbd_image_name)
-        return get_image_filename_filesytem(params, root_dir)
-    else:
+    if not image_name:
         logging.warn("image_name parameter not set.")
+        return
+
+    if params.get("enable_gluster", "no") == "yes":
+        image_format = params.get("image_format", "qcow2")
+        return gluster.get_image_filename(params, image_name, image_format)
+
+    if params.get("enable_ceph", "no") == "yes":
+        image_format = params.get("image_format", "qcow2")
+        ceph_monitor = params["ceph_monitor"]
+        rbd_pool_name = params["rbd_pool_name"]
+        rbd_image_name = "%s.%s" % (image_name.split("/")[-1],
+                                    image_format)
+        return ceph.get_image_filename(ceph_monitor, rbd_pool_name,
+                                       rbd_image_name)
+
+    return get_image_filename_filesytem(params, root_dir)
 
 
 def get_image_filename_filesytem(params, root_dir):
@@ -159,6 +155,23 @@ def get_image_filename_filesytem(params, root_dir):
            image_format -- the format of the image (qcow2, raw etc)
     :raise VMDeviceError: When no matching disk found (in indirect method).
     """
+    image_name = params.get("image_name", "image")
+
+    if params.get("indirect_image_select"):
+        image_name = get_image_filename_indirect(params)
+
+    if params.get("image_raw_device") == "yes":
+        return image_name
+
+    image_format = params.get("image_format", "qcow2")
+    if image_format:
+        image_name = "%s.%s" % (image_name, image_format)
+
+    return utils_misc.get_path(root_dir, image_name)
+
+
+def get_image_filename_indirect(params):
+
     def sort_cmp(first, second):
         """
         This function used for sort to suit for this test, first sort by len
@@ -181,45 +194,30 @@ def get_image_filename_filesytem(params, root_dir):
                 return 1
         return cmp(first, second)
 
-    image_name = params.get("image_name", "image")
-    indirect_image_select = params.get("indirect_image_select")
-    if indirect_image_select:
-        re_name = image_name
-        indirect_image_select = int(indirect_image_select)
-        matching_images = process.system_output("ls -1d %s" % re_name,
-                                                shell=True)
-        matching_images = sorted(matching_images.split('\n'), cmp=sort_cmp)
-        if matching_images[-1] == '':
-            matching_images = matching_images[:-1]
-        try:
-            image_name = matching_images[indirect_image_select]
-        except IndexError:
-            raise virt_vm.VMDeviceError("No matching disk found for "
+    pattern = params.get("image_name", "image")
+    index = int(params.get("indirect_image_select"))
+
+    matching_images = process.system_output("ls -1d %s" % pattern, shell=True)
+    matching_images = sorted(matching_images.strip().split('\n'), cmp=sort_cmp)
+    try:
+        image_name = matching_images[index]
+    except IndexError:
+        raise virt_vm.VMDeviceError("No matching disk found for "
+                                    "name = '%s', matching = '%s' and "
+                                    "selector = '%s'" %
+                                    (pattern, matching_images, index))
+
+    for protected in params.get('indirect_image_blacklist', '').split(' '):
+        match_image = re.match(protected, image_name)
+        if match_image and match_image.group(0) == image_name:
+            # We just need raise an error if it is totally match, such as
+            # sda sda1 and so on, but sdaa should not raise an error.
+            raise virt_vm.VMDeviceError("Matching disk is in blacklist. "
                                         "name = '%s', matching = '%s' and "
                                         "selector = '%s'" %
-                                        (re_name, matching_images,
-                                         indirect_image_select))
-        for protected in params.get('indirect_image_blacklist', '').split(' '):
-            match_image = re.match(protected, image_name)
-            if match_image and match_image.group(0) == image_name:
-                # We just need raise an error if it is totally match, such as
-                # sda sda1 and so on, but sdaa should not raise an error.
-                raise virt_vm.VMDeviceError("Matching disk is in blacklist. "
-                                            "name = '%s', matching = '%s' and "
-                                            "selector = '%s'" %
-                                            (re_name, matching_images,
-                                             indirect_image_select))
+                                        (pattern, matching_images, index))
 
-    image_format = params.get("image_format", "qcow2")
-    if params.get("image_raw_device") == "yes":
-        return image_name
-    if image_format:
-        image_filename = "%s.%s" % (image_name, image_format)
-    else:
-        image_filename = image_name
-
-    image_filename = utils_misc.get_path(root_dir, image_filename)
-    return image_filename
+    return image_name
 
 
 class OptionMissing(Exception):
