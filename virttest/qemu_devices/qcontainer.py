@@ -2413,3 +2413,54 @@ class DevContainer(object):
                                        params=vcpu_params,
                                        parent_bus={"aobject": "vcpu"})
         return vcpu_dev
+
+    def fs_define_by_params(self, name, params, bus=None):
+        driver = params["fs_driver"]
+        source = params["fs_source"]
+        target = params["fs_target"]
+        target_props = json.loads(params.get("fs_target_props", "{}"))
+
+        machine_type = params.get("machine_type", "")
+        qbus_type = "PCI"
+        if machine_type.startswith("q35") or machine_type.startswith("arm64"):
+            qbus_type = "PCIE"
+
+        devices = []
+        if driver == "virtio-fs":
+            # create virtiofsd daemon
+            sock_path = "/tmp/vhostqemu"
+            fsd_bin_path = params.get("virtiofsd_binary",
+                                      "/usr/libexec/virtiofsd")
+            fsd_cmd = ("%s -o vhost_user_socket=%s -o source=%s -o"
+                       " cache=always &") % (fsd_bin_path, sock_path, source)
+            process.run(fsd_cmd, ignore_bg_processes=True, shell=True)
+
+            char_params = Params()
+            char_params["backend"] = "socket"
+            char_params["id"] = "chr_vu_%s" % name
+            char_params["path"] = sock_path
+            char = qdevices.CharDevice(params=char_params)
+            devices.append(char)
+
+            qdriver = "vhost-user-fs"
+            if "-mmio:" in machine_type:
+                qdriver += "-device"
+                qbus_type = "virtio-bus"
+            elif machine_type.startswith("s390"):
+                qdriver += "-ccw"
+                qbus_type = "virtio-bus"
+            else:
+                qdriver += "-pci"
+
+            if bus is None:
+                bus = {"type": qbus_type}
+
+            dev_params = {"id": "vufs_%s" % name,
+                          "chardev": char.get_qid(),
+                          "tag": target}
+            dev_params.update(target_props)
+            dev = qdevices.QDevice(qdriver, params=dev_params, parent_bus=bus)
+            devices.append(dev)
+        else:
+            raise ValueError("unsupported filesystem driver type")
+        return devices

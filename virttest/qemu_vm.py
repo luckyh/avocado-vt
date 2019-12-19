@@ -1871,6 +1871,12 @@ class VM(virt_vm.BaseVM):
             for _ in devs:
                 devices.insert(_)
 
+        # Add filesystems
+        for fs_name in params.objects("filesystems"):
+            fs_params = params.object_params(fs_name)
+            devs = devices.fs_define_by_params(fs_name, fs_params)
+            devices.insert(devs)
+
         # Networking
         redirs = []
         for redir_name in params.objects("redirs"):
